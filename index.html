@@ -47,10 +47,14 @@ let imageIndex = 0;
 let stepCount = 0;
 let lastStepTime = 0;
 let stepDetected = false;
-let lastAccMag = 0;let stepInterval = 0;
+let lastAccMag = 0;
+let stepInterval = 0;
 let lastMoveTime = Date.now();
 const STEP_LENGTH = 0.7; // 1歩あたり0.7m
 const STEP_THRESHOLD = 1.2; // 加速度変化のしきい値
+const CALIBRATION_STEPS = 5; // キャリブレーションに使う歩数
+let calibrationData = [];    // ステップ間隔の記録
+let calibrated = false;      // キャリブレーション完了フラグ
 let currentSpeed = 0;
 
 let lastUpdateTime = null;
@@ -179,56 +183,67 @@ if (window.DeviceOrientationEvent) {
   });
 } 
 if (window.DeviceMotionEvent) {
-        window.addEventListener("devicemotion", (event) => {
-            const acc = event.accelerationIncludingGravity;
-            const now = Date.now();
-            if (!lastUpdateTime || !imuLat || !imuLon) {
-                lastUpdateTime = now;
-                return;
-            }
-
-            const dt = (now - lastUpdateTime) / 1000;
-            lastUpdateTime = now;
-
-            // --- 加速度の大きさ ---
-            const accMag = Math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2);
-
-            // --- ステップ検出（ピーク判定） ---
-            if (accMag - lastAccMag > STEP_THRESHOLD && now - lastStepTime > 300) {
-                stepCount++;
-                stepDetected = true;
-                stepInterval = (now - lastStepTime) / 1000;
-                lastStepTime = now;
-                lastMoveTime = now;
-
-                // 歩行速度 = 歩幅 ÷ ステップ間隔
-                currentSpeed = STEP_LENGTH / stepInterval;
-                // 速度を4〜8km/hの範囲に制限
-                currentSpeed = Math.min(Math.max(currentSpeed, 1.1), 2.2);
-            } else {
-                stepDetected = false;
-            }
-
-            lastAccMag = accMag;
-
-            // --- 停止判定 ---
-            if (now - lastMoveTime > 2000) { // 2秒間ステップなし
-                currentSpeed = 0;
-            }
-
-            // --- 位置更新 ---
-            if (currentSpeed > 0 && heading && imuLat && imuLon) {
-                const distance = currentSpeed * dt;
-                const dLat = (distance * Math.cos(heading * Math.PI / 180)) / 111111;
-                const dLon = (distance * Math.sin(heading * Math.PI / 180)) / (111111 * Math.cos(imuLat * Math.PI / 180));
-                imuLat += dLat;
-                imuLon += dLon;
-                checkProximity(imuLat, imuLon);
-            }
-        });
+  window.addEventListener("devicemotion", (event) => {
+    const acc = event.accelerationIncludingGravity;
+    const now = Date.now();
+    if (!lastUpdateTime || !imuLat || !imuLon) {
+      lastUpdateTime = now;
+      return;
     }
 
-   
+    const dt = (now - lastUpdateTime) / 1000;
+    lastUpdateTime = now;
+
+    const accMag = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+
+    // --- ステップ検出 ---
+    if (accMag - lastAccMag > STEP_THRESHOLD && now - lastStepTime > 300) {
+      stepCount++;
+      stepDetected = true;
+      stepInterval = (now - lastStepTime) / 1000;
+      lastStepTime = now;
+      lastMoveTime = now;
+
+      // --- キャリブレーション ---
+      if (!calibrated) {
+        calibrationData.push(stepInterval);
+        if (calibrationData.length >= CALIBRATION_STEPS) {
+          const avgInterval = calibrationData.reduce((a, b) => a + b, 0) / calibrationData.length;
+          const avgSpeed = 1.6; // m/s（約6km/h）を基準とした平均歩行速度
+          dynamicStepLength = avgSpeed * avgInterval;
+          dynamicStepLength = Math.min(Math.max(dynamicStepLength, 0.6), 0.85); // 0.6〜0.85m範囲に制限
+          calibrated = true;
+          console.log(`歩幅キャリブレーション完了: ${dynamicStepLength.toFixed(2)} m/歩`);
+        }
+      }
+
+      // --- 歩行速度を計算 ---
+      currentSpeed = dynamicStepLength / stepInterval;
+      currentSpeed = Math.min(Math.max(currentSpeed, 1.1), 2.2); // 4〜8km/h範囲
+
+    } else {
+      stepDetected = false;
+    }
+
+    lastAccMag = accMag;
+
+    // --- 停止判定 ---
+    if (now - lastMoveTime > 2000) { // 2秒間ステップなし
+      currentSpeed = 0;
+    }
+
+    // --- 位置更新 ---
+    if (currentSpeed > 0 && heading && imuLat && imuLon) {
+      const distance = currentSpeed * dt;
+      const dLat = (distance * Math.cos(heading * Math.PI / 180)) / 111111;
+      const dLon = (distance * Math.sin(heading * Math.PI / 180)) / (111111 * Math.cos(imuLat * Math.PI / 180));
+      imuLat += dLat;
+      imuLon += dLon;
+      checkProximity(imuLat, imuLon);
+    }
+  });
+}
+
 /* ---------------- GPS ---------------- */
 if ("geolocation" in navigator) {
   navigator.geolocation.watchPosition(
@@ -251,3 +266,4 @@ window.onload = () => {
 
 </body>
 </html>
+

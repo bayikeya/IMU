@@ -181,14 +181,21 @@ if (window.DeviceMotionEvent) {
     lastUpdateTime = now;
 
     const speed = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
-    if (speed > 0.2 && heading) {
-      const distance = speed * dt * 0.5; // 歩行推定距離（m）
-      const dLat = (distance * Math.cos(heading * Math.PI / 180)) / 111111;
-      const dLon = (distance * Math.sin(heading * Math.PI / 180)) / (111111 * Math.cos(imuLat * Math.PI / 180));
-      imuLat += dLat;
-      imuLon += dLon;
-      checkProximity(imuLat, imuLon);
-    }
+   // 加速度→歩行速度(4〜10km/h)にスケーリング
+      // accMag = 1G（9.8m/s²）前後のとき約7km/hになるように調整
+      const minSpeed = 1.11; // 4 km/h
+      const maxSpeed = 2.78; // 10 km/h
+      let walkSpeed = minSpeed + (speed / 9.8) * (maxSpeed - minSpeed);
+      walkSpeed = Math.min(Math.max(walkSpeed, minSpeed), maxSpeed);
+
+      if (heading && imuLat && imuLon) {
+          const distance = walkSpeed * dt; // 歩行距離（m）
+          const dLat = (distance * Math.cos(heading * Math.PI / 180)) / 111111;
+          const dLon = (distance * Math.sin(heading * Math.PI / 180)) / (111111 * Math.cos(imuLat * Math.PI / 180));
+          imuLat += dLat;
+          imuLon += dLon;
+          checkProximity(imuLat, imuLon);
+      }
   });
 }
 

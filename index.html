@@ -88,8 +88,7 @@ function checkProximity(lat, lon) {
   info.innerText =
     `IMU補正位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}\n` +
     `次のスポット: ${spot.name}（${currentIndex + 1} / ${spots.length}）\n` +
-    `残り距離: ${distance.toFixed(1)}m\n` +
-    `方位: ${heading.toFixed(1)}°`;
+    `残り距離: ${distance.toFixed(1)}m\n`;
 
   if (currentIndex >= 1 && !hasEnteredSpot && distance < range) {
     showSpot(spot);
@@ -221,4 +220,5 @@ window.onload = () => {
 
 </body>
 </html>
+
 

@@ -12,6 +12,7 @@
     .btn { position: absolute; left: 50%; transform: translateX(-50%); background-color: #007BFF; color: white; border: none; padding: 10px 20px; font-size: 14px; border-radius: 8px; cursor: pointer; z-index: 2; display: none; }
     #patternBtn { bottom: 70px; }
     #nextBtn { bottom: 20px; }
+    #startBtn { bottom: 120px; display:block; } /* 避難開始ボタン */
     .img-nav { position: absolute; bottom: 260px; z-index: 2; font-size: 20px; background: rgba(0,0,0,0.5); color: white; border: none; padding: 5px 15px; cursor: pointer; border-radius: 6px; }
     #prevBtn { left: 10%; }
     #nextImgBtn { right: 10%; }
@@ -24,6 +25,7 @@
 <img id="image" src="" alt="スポット画像" />
 <button class="btn" id="patternBtn" onclick="switchPattern()">English</button>
 <button class="btn" id="nextBtn" onclick="goToNextSpot()">このスポットは完了</button>
+<button class="btn" id="startBtn" onclick="startEvacuation()">避難開始</button>
 <button class="img-nav" id="prevBtn" onclick="showPrevImage()" style="display:none;">←</button>
 <button class="img-nav" id="nextImgBtn" onclick="showNextImage()" style="display:none;">→</button>
 <audio id="audio" src=""></audio>
@@ -49,46 +51,70 @@ let lastStepTime = 0;
 let stepDetected = false;
 let lastAccMag = 0;let stepInterval = 0;
 let lastMoveTime = Date.now();
-const STEP_LENGTH = 0.7; // 1歩あたり0.7m
-const STEP_THRESHOLD = 1.2; // 加速度変化のしきい値
+const STEP_LENGTH = 0.7;
+const STEP_THRESHOLD = 1.2;
 let currentSpeed = 0;
 
 let lastUpdateTime = null;
 let velocity = {x: 0, y: 0, z: 0};
 let imuLat = null, imuLon = null;
-let heading = 0; // 方位（度）
+let heading = 0;
 
 const camera = document.getElementById("camera");
 const info = document.getElementById("info");
 const image = document.getElementById("image");
 const nextBtn = document.getElementById("nextBtn");
 const patternBtn = document.getElementById("patternBtn");
+const startBtn = document.getElementById("startBtn");
 const audio = document.getElementById("audio");
 const prevBtn = document.getElementById("prevBtn");
 const nextImgBtn = document.getElementById("nextImgBtn");
 
-// --- QRコードから初期位置取得 ---
-    function getQRInitialPosition() {
-            const params = new URLSearchParams(window.location.search);
-            const lat = parseFloat(params.get("lat"));
-            const lon = parseFloat(params.get("lon"));
-            if (!isNaN(lat) && !isNaN(lon)) {
-                imuLat = lat;
-                imuLon = lon;
-                info.innerText = `QRコード補正済み位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}`;
-                // スポット1もQR座標に
-                spots[0].lat = lat;
-                spots[0].lon = lon;
-              // --- 即時に距離表示を更新 ---
-                checkProximity(imuLat, imuLon);
-            }
-        };
-/* ---------------- カメラ起動 ---------------- */
+/* --- QRコード初期座標取得 --- */
+function getQRInitialPosition() {
+    const params = new URLSearchParams(window.location.search);
+    const lat = parseFloat(params.get("lat"));
+    const lon = parseFloat(params.get("lon"));
+    if (!isNaN(lat) && !isNaN(lon)) {
+        imuLat = lat;
+        imuLon = lon;
+        info.innerText = `QRコード補正済み位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}`;
+        spots[0].lat = lat;
+        spots[0].lon = lon;
+    }
+}
+
+/* --- 避難開始ボタン用関数 --- */
+function startEvacuation() {
+    getQRInitialPosition();
+
+    currentIndex = 0;
+    hasEnteredSpot = true;
+    currentSpot = spots[0];
+    imageIndex = 0;
+
+    image.src = currentSpot.images[imageIndex];
+    image.style.display = "block";
+    nextBtn.style.display = "block";
+    patternBtn.style.display = "block";
+    prevBtn.style.display = currentSpot.images.length > 1 ? "block" : "none";
+    nextImgBtn.style.display = currentSpot.images.length > 1 ? "block" : "none";
+
+    audio.src = currentSpot.audio[currentPattern];
+    audio.loop = true;
+    audio.play().catch(e => console.log("自動再生に失敗:", e));
+
+    checkProximity(imuLat, imuLon);
+
+    startBtn.style.display = "none";
+}
+
+/* --- カメラ --- */
 navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
   .then(stream => camera.srcObject = stream)
   .catch(err => alert("カメラへのアクセスに失敗しました: " + err));
 
-/* ---------------- 距離計算（haversine） ---------------- */
+/* --- 距離計算 --- */
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -98,7 +124,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-/* ---------------- スポット判定 ---------------- */
+/* --- スポット判定 --- */
 function checkProximity(lat, lon) {
   if (currentIndex >= spots.length) {
     info.innerText = "すべてのスポットを通過しました。";
@@ -120,7 +146,7 @@ function checkProximity(lat, lon) {
   }
 }
 
-/* ---------------- スポット表示 ---------------- */
+/* --- スポット表示 --- */
 function showSpot(spot) {
   currentSpot = spot;
   hasEnteredSpot = true;
@@ -138,7 +164,7 @@ function showSpot(spot) {
   audio.play().catch(e => console.log("自動再生に失敗:", e));
 }
 
-/* ---------------- 音声パターン切替 ---------------- */
+/* --- 音声パターン切替 --- */
 function switchPattern() {
   const patterns = ["A", "B", "C"];
   const index = patterns.indexOf(currentPattern);
@@ -151,12 +177,11 @@ function switchPattern() {
     audio.play().catch(e => console.log("自動再生に失敗:", e));
   }
 }
-
 function updatePatternButtonText() {
   patternBtn.innerText = currentPattern === "A" ? "English" : currentPattern === "B" ? "中文" : "日本語";
 }
 
-/* ---------------- 画像切替 ---------------- */
+/* --- 画像切替 --- */
 function showPrevImage() {
   if (!currentSpot) return;
   imageIndex = (imageIndex - 1 + currentSpot.images.length) % currentSpot.images.length;
@@ -168,7 +193,7 @@ function showNextImage() {
   image.src = currentSpot.images[imageIndex];
 }
 
-/* ---------------- 次のスポットへ ---------------- */
+/* --- 次のスポットへ --- */
 function goToNextSpot() {
   audio.pause();
   currentIndex++;
@@ -177,7 +202,7 @@ function goToNextSpot() {
   hideAllUI();
 }
 
-/* ---------------- UI 非表示 ---------------- */
+/* --- UI 非表示 --- */
 function hideAllUI() {
   image.style.display = "none";
   nextBtn.style.display = "none";
@@ -186,66 +211,54 @@ function hideAllUI() {
   nextImgBtn.style.display = "none";
 }
 
-/* ---------------- IMU（加速度＋方位） ---------------- */
+/* --- IMU（加速度＋方位） --- */
 if (window.DeviceOrientationEvent) {
   window.addEventListener("deviceorientation", (event) => {
     if (event.absolute && event.alpha != null) {
-      heading = 360 - event.alpha; // 北を0°とした方位
+      heading = 360 - event.alpha;
     }
   });
 } 
 if (window.DeviceMotionEvent) {
-        window.addEventListener("devicemotion", (event) => {
-            const acc = event.accelerationIncludingGravity;
-            const now = Date.now();
-            if (!lastUpdateTime || !imuLat || !imuLon) {
-                lastUpdateTime = now;
-                return;
-            }
-
-            const dt = (now - lastUpdateTime) / 1000;
-            lastUpdateTime = now;
-
-            // --- 加速度の大きさ ---
-            const accMag = Math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2);
-
-            // --- ステップ検出（ピーク判定） ---
-            if (accMag - lastAccMag > STEP_THRESHOLD && now - lastStepTime > 300) {
-                stepCount++;
-                stepDetected = true;
-                stepInterval = (now - lastStepTime) / 1000;
-                lastStepTime = now;
-                lastMoveTime = now;
-
-                // 歩行速度 = 歩幅 ÷ ステップ間隔
-                currentSpeed = STEP_LENGTH / stepInterval;
-                // 速度を4〜8km/hの範囲に制限
-                currentSpeed = Math.min(Math.max(currentSpeed, 1.1), 2.2);
-            } else {
-                stepDetected = false;
-            }
-
-            lastAccMag = accMag;
-
-            // --- 停止判定 ---
-            if (now - lastMoveTime > 2000) { // 2秒間ステップなし
-                currentSpeed = 0;
-            }
-
-            // --- 位置更新 ---
-            if (currentSpeed > 0 && heading && imuLat && imuLon) {
-                const distance = currentSpeed * dt;
-                const dLat = (distance * Math.cos(heading * Math.PI / 180)) / 111111;
-                const dLon = (distance * Math.sin(heading * Math.PI / 180)) / (111111 * Math.cos(imuLat * Math.PI / 180));
-                imuLat += dLat;
-                imuLon += dLon;
-                checkProximity(imuLat, imuLon);
-            }
-        });
+  window.addEventListener("devicemotion", (event) => {
+    const acc = event.accelerationIncludingGravity;
+    const now = Date.now();
+    if (!lastUpdateTime || !imuLat || !imuLon) {
+      lastUpdateTime = now;
+      return;
     }
 
-   
-/* ---------------- GPS ---------------- */
+    const dt = (now - lastUpdateTime) / 1000;
+    lastUpdateTime = now;
+    const accMag = Math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2);
+
+    if (accMag - lastAccMag > STEP_THRESHOLD && now - lastStepTime > 300) {
+      stepCount++;
+      stepDetected = true;
+      stepInterval = (now - lastStepTime) / 1000;
+      lastStepTime = now;
+      lastMoveTime = now;
+      currentSpeed = STEP_LENGTH / stepInterval;
+      currentSpeed = Math.min(Math.max(currentSpeed, 1.1), 2.2);
+    } else {
+      stepDetected = false;
+    }
+    lastAccMag = accMag;
+
+    if (now - lastMoveTime > 2000) currentSpeed = 0;
+
+    if (currentSpeed > 0 && heading && imuLat && imuLon) {
+      const distance = currentSpeed * dt;
+      const dLat = (distance * Math.cos(heading * Math.PI / 180)) / 111111;
+      const dLon = (distance * Math.sin(heading * Math.PI / 180)) / (111111 * Math.cos(imuLat * Math.PI / 180));
+      imuLat += dLat;
+      imuLon += dLon;
+      checkProximity(imuLat, imuLon);
+    }
+  });
+}
+
+/* --- GPS --- */
 if ("geolocation" in navigator) {
   navigator.geolocation.watchPosition(
     pos => {
@@ -260,12 +273,10 @@ if ("geolocation" in navigator) {
 }
 
 window.onload = () => {
-  getQRInitialPosition(); // QR座標で補正
-  showSpot(spots[0]);
+  getQRInitialPosition();
   updatePatternButtonText();
 };
 </script>
 
 </body>
 </html>
-

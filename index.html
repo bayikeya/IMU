@@ -77,7 +77,7 @@ const nextImgBtn = document.getElementById("nextImgBtn");
             imuLon = lon;
             info.innerText = `QRコード補正済み位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}`;
         }
-    }
+    };
 /* ---------------- カメラ起動 ---------------- */
 navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
   .then(stream => camera.srcObject = stream)
@@ -263,3 +263,4 @@ window.onload = () => {
 
 </body>
 </html>
+

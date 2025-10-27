@@ -95,14 +95,34 @@ function getDistance(lat1,lon1,lat2,lon2){
 }
 
 /* --- スポット判定 --- */
-function checkProximity(lat,lon){
-  if(currentIndex>=spots.length){info.innerText="すべてのスポットを通過しました。"; hideAllUI(); return;}
-  const spot=spots[currentIndex];
-  const distance=getDistance(lat,lon,spot.lat,spot.lon);
-  const range=spot.radius||10;
-  info.innerText=`IMU補正位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}\n次のスポット: ${spot.name}（${currentIndex+1}/${spots.length}）\n残り距離: ${distance.toFixed(1)}m\n`;
-  if(currentIndex>=1&&!hasEnteredSpot&&distance<range) showSpot(spot);
-}
+    function checkProximity(lat, lon) {
+        if (currentIndex >= spots.length) {
+            info.innerText = "すべてのスポットを通過しました。";
+            hideAllUI();
+            return;
+        }
+
+        const spot = spots[currentIndex];
+        const distance = getDistance(lat, lon, spot.lat, spot.lon);
+        const range = spot.radius || 10;
+
+        // --- スポット1は距離表示なし ---
+        if (currentIndex === 0) {
+            info.innerText =
+                `IMU補正位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}\n` +
+                `次のスポット: ${spot.name}（${currentIndex + 1} / ${spots.length}）`;
+        } else {
+            info.innerText =
+                `IMU補正位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}\n` +
+                `次のスポット: ${spot.name}（${currentIndex + 1} / ${spots.length}）\n` +
+                `残り距離: ${distance.toFixed(1)}m\n`;
+        }
+
+        if (currentIndex >= 1 && !hasEnteredSpot && distance < range) {
+            showSpot(spot);
+        }
+    }
+
 
 /* --- スポット表示 --- */
 function showSpot(spot){

@@ -323,12 +323,17 @@
         if ("geolocation" in navigator) {
             navigator.geolocation.watchPosition(
                 pos => {
-                    imuLat = pos.coords.latitude;
-                    imuLon = pos.coords.longitude;
+                    // ✅ QRコードによる初期補正が「まだないとき」だけGPS値を使う
+                    if (!imuLat || !imuLon) {
+                        imuLat = pos.coords.latitude;
+                        imuLon = pos.coords.longitude;
+                    }
                     lastUpdateTime = Date.now();
                     checkProximity(imuLat, imuLon);
                 },
-                err => info.innerText = "位置情報の取得に失敗しました",
+                err => {
+                    console.warn("位置情報の取得に失敗:", err);
+                },
                 { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
             );
         }

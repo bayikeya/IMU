@@ -79,6 +79,8 @@ const nextImgBtn = document.getElementById("nextImgBtn");
                 // スポット1もQR座標に
                 spots[0].lat = lat;
                 spots[0].lon = lon;
+              // --- 即時に距離表示を更新 ---
+                checkProximity(imuLat, imuLon);
             }
         };
 /* ---------------- カメラ起動 ---------------- */
@@ -266,3 +268,4 @@ window.onload = () => {
 
 </body>
 </html>
+

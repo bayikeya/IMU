@@ -339,8 +339,21 @@
         }
 
         window.onload = () => {
-            showSpot(spots[0]);
             updatePatternButtonText();
+
+            if (imuLat && imuLon) {
+                // ✅ QR補正あり：QR位置を画面に表示し、最初のスポット距離を0mで扱う
+                const spot = spots[0];
+                info.innerText =
+                    `IMU補正位置: 緯度 ${imuLat.toFixed(6)}, 経度 ${imuLon.toFixed(6)}\n` +
+                    `現在地: ${spot.name}（1 / ${spots.length}）\n残り距離: 0.0m\n`;
+
+                // ✅ 最初のスポットを即表示
+                showSpot(spot);
+            } else {
+                // ✅ 通常起動時のみGPS待ち表示
+                info.innerText = "初期位置を取得中...";
+            }
         };
     </script>
 

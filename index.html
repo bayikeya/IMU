@@ -338,23 +338,40 @@
             );
         }
 
-        window.onload = () => {
+         window.onload = () => {
             updatePatternButtonText();
 
-            if (imuLat && imuLon) {
-                // ✅ QR補正あり：QR位置を画面に表示し、最初のスポット距離を0mで扱う
+            const urlParams = new URLSearchParams(window.location.search);
+            const qrLat = parseFloat(urlParams.get("lat"));
+            const qrLon = parseFloat(urlParams.get("lng") || urlParams.get("lon")); // 両方対応
+            const qrName = urlParams.get("name");
+
+            if (!isNaN(qrLat) && !isNaN(qrLon)) {
+                // ✅ QRコード座標で初期キャリブレーション
+                imuLat = qrLat;
+                imuLon = qrLon;
+                currentLat = qrLat;
+                currentLon = qrLon;
+
+                console.log("✅ QRコード補正完了:", imuLat, imuLon);
+
                 const spot = spots[0];
                 info.innerText =
-                    `IMU補正位置: 緯度 ${imuLat.toFixed(6)}, 経度 ${imuLon.toFixed(6)}\n` +
-                    `現在地: ${spot.name}（1 / ${spots.length}）\n残り距離: 0.0m\n`;
+                    `📍IMU補正位置: 緯度 ${imuLat.toFixed(6)}, 経度 ${imuLon.toFixed(6)}\n` +
+                    `現在地: ${spot.name}（1 / ${spots.length}）\n残り距離: 0.0m`;
 
-                // ✅ 最初のスポットを即表示
-                showSpot(spot);
+                // ✅ スポット名がURLに一致する場合はそのスポットを即表示
+                if (qrName && spots.find(s => s.name === qrName)) {
+                    const targetSpot = spots.find(s => s.name === qrName);
+                    showSpot(targetSpot);
+                } else {
+                    showSpot(spot);
+                }
             } else {
-                // ✅ 通常起動時のみGPS待ち表示
-                info.innerText = "初期位置を取得中...";
+                info.innerText = "初期位置取得中...";
             }
         };
+
     </script>
 
 </body>

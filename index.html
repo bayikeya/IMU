@@ -69,15 +69,18 @@ const nextImgBtn = document.getElementById("nextImgBtn");
 
 // --- QRコードから初期位置取得 ---
     function getQRInitialPosition() {
-        const params = new URLSearchParams(window.location.search);
-        const lat = parseFloat(params.get("lat"));
-        const lon = parseFloat(params.get("lon"));
-        if (!isNaN(lat) && !isNaN(lon)) {
-            imuLat = lat;
-            imuLon = lon;
-            info.innerText = `QRコード補正済み位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}`;
-        }
-    };
+            const params = new URLSearchParams(window.location.search);
+            const lat = parseFloat(params.get("lat"));
+            const lon = parseFloat(params.get("lon"));
+            if (!isNaN(lat) && !isNaN(lon)) {
+                imuLat = lat;
+                imuLon = lon;
+                info.innerText = `QRコード補正済み位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}`;
+                // スポット1もQR座標に
+                spots[0].lat = lat;
+                spots[0].lon = lon;
+            }
+        };
 /* ---------------- カメラ起動 ---------------- */
 navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
   .then(stream => camera.srcObject = stream)
@@ -263,4 +266,3 @@ window.onload = () => {
 
 </body>
 </html>
-

@@ -109,11 +109,6 @@ function showSpot(spot) {
   currentSpot = spot;
   hasEnteredSpot = true;
   imageIndex = 0;
-  
-   // --- 🔹ここを追加：スポット到達時にキャリブレーション ---
-  imuLat = spot.lat;
-  imuLon = spot.lon;
-  console.log("キャリブレーション実施:", imuLat, imuLon);
 
   audio.src = spot.audio[currentPattern];
   image.src = spot.images[imageIndex];

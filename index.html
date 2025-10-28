@@ -135,7 +135,7 @@ let STEP_LENGTH = 0.7;
 let STEP_THRESHOLD = 1.2;
 
 let lastUpdateTime = null;
-let imuLat = null, imuLon = null;
+let imuLat = null, imuLon = null; // UI 用のキャッシュ
 let qrUsed = false;
 let qrLat = null, qrLon = null;
 let gpsBias = { lat: 0, lon: 0 };
@@ -152,6 +152,60 @@ const audio = document.getElementById("audio");
 const prevBtn = document.getElementById("prevBtn");
 const nextImgBtn = document.getElementById("nextImgBtn");
 
+/* ------------------
+   PDRFusion モジュールをここに統合（ブラウザ用 inline 版）
+   API: init(qLat,qLon), onGPS(lat,lon,accuracy), setHeading(deg), onStep(), getPosition(), setStepLength(m)
+   ------------------ */
+const PDRFusion = (() => {
+  let imuLat = null, imuLon = null;
+  let qrUsed = false, qrLat = null, qrLon = null;
+  let gpsBiasComputed = false, gpsBias = {lat:0, lon:0};
+  let heading = null; // degrees 0-360 from AHRS
+  let stepLength = 0.7; // 初期歩幅（要調整）
+  const R_EARTH = 6371000;
+
+  function init(qLat, qLon) {
+    if (typeof qLat === 'number' && typeof qLon === 'number') {
+      qrUsed = true; qrLat = qLat; qrLon = qLon;
+      imuLat = qLat; imuLon = qLon;
+    }
+  }
+
+  function onGPS(glat, glon, accuracy) {
+    if (!qrUsed) {
+      imuLat = glat; imuLon = glon;
+      return;
+    }
+    if (!gpsBiasComputed) {
+      gpsBias.lat = qrLat - glat;
+      gpsBias.lon = qrLon - glon;
+      gpsBiasComputed = true;
+      console.log('GPS bias computed', gpsBias);
+    }
+    imuLat = glat + gpsBias.lat;
+    imuLon = glon + gpsBias.lon;
+  }
+
+  function setHeading(deg) { if (typeof deg === 'number') heading = (deg+360)%360; }
+
+  function onStep() {
+    if (imuLat == null || imuLon == null || heading == null) return;
+    // 歩行1ステップでの移動
+    const distance = stepLength; // meters
+    const rad = heading * Math.PI / 180;
+    const dLat = (distance * Math.cos(rad)) / 111111;
+    const dLon = (distance * Math.sin(rad)) / (111111 * Math.cos(imuLat * Math.PI / 180));
+    imuLat += dLat;
+    imuLon += dLon;
+  }
+
+  function getPosition(){ return { lat: imuLat, lon: imuLon }; }
+
+  function setStepLength(m){ if (typeof m === 'number' && m > 0) stepLength = m; }
+
+  return { init, onGPS, setHeading, onStep, getPosition, setStepLength };
+})();
+
 /* QR読み取りによる初期位置取得（URL の lat lon を使う想定） */
 function getQRInitialPosition() {
   const params = new URLSearchParams(window.location.search);
@@ -161,8 +215,10 @@ function getQRInitialPosition() {
     qrUsed = true;
     qrLat = lat;
     qrLon = lon;
-    imuLat = lat;
-    imuLon = lon;
+    // PDRFusion にも通知
+    PDRFusion.init(lat, lon);
+    const pos = PDRFusion.getPosition();
+    imuLat = pos.lat; imuLon = pos.lon;
     info.innerText = `QRコード補正済み位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}`;
     // 最初のスポットを QR に合わせる（必要なら）
     spots[0].lat = lat;
@@ -172,6 +228,9 @@ function getQRInitialPosition() {
 
 function startEvacuation() {
   getQRInitialPosition();
+
+  // step length を外側の定数で上書き可能
+  PDRFusion.setStepLength(STEP_LENGTH);
 
   currentIndex = 0;
   hasEnteredSpot = true;
@@ -192,6 +251,9 @@ function startEvacuation() {
   // ここで IMU の積分を開始できるように時間だけ初期化しておく
   lastUpdateTime = Date.now();
 
+  // 最初の位置チェック
+  const p = PDRFusion.getPosition();
+  imuLat = p.lat; imuLon = p.lon;
   checkProximity(imuLat, imuLon);
   startBtn.style.display = "none";
 }
@@ -274,6 +336,8 @@ if (window.DeviceOrientationEvent) {
       // heading を 0-360 に正規化
       if (heading < 0) heading += 360;
       if (heading >= 360) heading -= 360;
+      // PDRFusion に方位を通知
+      PDRFusion.setHeading(heading);
     }
   });
 }
@@ -295,21 +359,17 @@ if (window.DeviceMotionEvent) {
       stepCount++;
       const stepInterval = (now - lastStepTime) / 1000;
       lastStepTime = now;
-      lastMoveTime = now;
       // 簡易速度推定（平均歩幅 / stepInterval）
       let estimatedSpeed = STEP_LENGTH / Math.max(stepInterval, 0.2);
       // clamp（必要に応じて調整）
       estimatedSpeed = Math.min(Math.max(estimatedSpeed, 0.6), 2.2);
-      // 移動距離
-      const distance = estimatedSpeed * dt;
-      // heading が数値であれば移動を適用
-      if (typeof heading === 'number' && !Number.isNaN(heading) && imuLat != null && imuLon != null) {
-        const dLat = (distance * Math.cos(heading * Math.PI / 180)) / 111111;
-        const dLon = (distance * Math.sin(heading * Math.PI / 180)) / (111111 * Math.cos(imuLat * Math.PI / 180));
-        imuLat += dLat;
-        imuLon += dLon;
-        checkProximity(imuLat, imuLon);
-      }
+      // 移動距離（この実装では PDRFusion 側の stepLength を使うので、ここでは PDRFusion.onStep を呼ぶ）
+      // PDRFusion にステップを通知
+      PDRFusion.onStep();
+      // PDRFusion から位置を取得して UI を更新
+      const pos = PDRFusion.getPosition();
+      imuLat = pos.lat; imuLon = pos.lon;
+      checkProximity(imuLat, imuLon);
     }
     lastAccMag = accMag;
   });
@@ -321,21 +381,11 @@ if ("geolocation" in navigator) {
     pos => {
       const glat = pos.coords.latitude;
       const glon = pos.coords.longitude;
-      // QR を使用して開始していて、まだバイアス未計算ならここでバイアスを算出
-      if (qrUsed && !gpsBiasComputed && qrLat != null && qrLon != null) {
-        gpsBias.lat = qrLat - glat;
-        gpsBias.lon = qrLon - glon;
-        gpsBiasComputed = true;
-        console.log("GPS bias computed:", gpsBias);
-      }
-      // バイアスを適用して imuLat/imuLon を更新
-      if (gpsBiasComputed) {
-        imuLat = glat + gpsBias.lat;
-        imuLon = glon + gpsBias.lon;
-      } else {
-        imuLat = glat;
-        imuLon = glon;
-      }
+      // PDRFusion に GPS を渡して補正を行わせる
+      PDRFusion.onGPS(glat, glon, pos.coords.accuracy);
+      const p = PDRFusion.getPosition();
+      imuLat = p.lat;
+      imuLon = p.lon;
       lastUpdateTime = Date.now();
       checkProximity(imuLat, imuLon);
     },

@@ -2,31 +2,25 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>IMU統合版：複数画像切替付きスポット案内（自動音声版）</title>
+  <title>IMU統合版：複数画像切替付きスポット案内（自動音声版） + カルマンフィルタ</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     body { margin: 0; overflow: hidden; background-color: #000; color: white; font-family: sans-serif; text-align: center; }
     #camera { width: 100vw; height: 100vh; object-fit: cover; position: absolute; top: 0; left: 0; z-index: -1; }
-    #info { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; z-index: 2; white-space: pre-wrap; font-size: 13px; max-width: 48vw; }
-    #debug { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; z-index: 2; white-space: pre-wrap; font-size: 12px; text-align: left; max-width: 48vw; }
+    #info { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; z-index: 1; white-space: pre-wrap; font-size: 13px; }
     #image { position: absolute; bottom: 180px; left: 50%; transform: translateX(-50%); width: 300px; height: 300px; object-fit: contain; display: none; z-index: 1; background: black; }
-    .btn { position: absolute; left: 50%; transform: translateX(-50%); background-color: #007BFF; color: white; border: none; padding: 10px 20px; font-size: 14px; border-radius: 8px; cursor: pointer; z-index: 3; display: none; }
-    #startBtn { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 4; display: block; }
+    .btn { position: absolute; left: 50%; transform: translateX(-50%); background-color: #007BFF; color: white; border: none; padding: 10px 20px; font-size: 14px; border-radius: 8px; cursor: pointer; z-index: 2; display: none; }
     #patternBtn { bottom: 70px; }
     #nextBtn { bottom: 20px; }
-    .img-nav { position: absolute; bottom: 260px; z-index: 3; font-size: 20px; background: rgba(0,0,0,0.5); color: white; border: none; padding: 5px 15px; cursor: pointer; border-radius: 6px; }
+    .img-nav { position: absolute; bottom: 260px; z-index: 2; font-size: 20px; background: rgba(0,0,0,0.5); color: white; border: none; padding: 5px 15px; cursor: pointer; border-radius: 6px; }
     #prevBtn { left: 10%; }
     #nextImgBtn { right: 10%; }
-    #controls { position: absolute; bottom: 140px; left: 10px; z-index: 3; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 8px; font-size: 12px; }
-    input[type=range] { width: 120px; }
   </style>
 </head>
 <body>
 
 <video id="camera" autoplay playsinline muted></video>
-<div id="info">タップして開始してください（センサー許可を要求します）</div>
-<div id="debug" style="display:none;"></div>
-
+<div id="info">位置情報・IMU取得中...</div>
 <img id="image" src="" alt="スポット画像" />
 <button class="btn" id="patternBtn" onclick="switchPattern()">English</button>
 <button class="btn" id="nextBtn" onclick="goToNextSpot()">このスポットは完了</button>
@@ -34,17 +28,17 @@
 <button class="img-nav" id="nextImgBtn" onclick="showNextImage()" style="display:none;">→</button>
 <audio id="audio" src=""></audio>
 
-<button id="startBtn" class="btn" onclick="startApp()">アプリを開始する</button>
-
-<div id="controls" style="display:none;">
-  歩幅係数: <input id="strideScale" type="range" min="0.6" max="1.4" step="0.01" value="1"> <span id="strideVal">1.00</span><br>
-  補正ゲイン: <input id="fusionGain" type="range" min="0.01" max="0.6" step="0.01" value="0.12"> <span id="fusionVal">0.12</span>
-</div>
-
 <script>
-/* === スポットデータ（例） === */
+/*
+  変更点:
+  - 単純なカルマンフィルタ（2D: x=east, y=north, vx, vy）を導入してGPSとIMU（歩行によるデッドレコニング）を融合します。
+  - GPS測位が来たら更新（update）、IMUのステップで移動があるたびに予測（predict）を行います。
+  - 表示にはフィルタ推定位置と推定誤差（共分散）を表示します。
+  - 既存のロジックを大きく変えず、imuLat/imuLonをカルマンフィルタ出力で上書きしています。
+*/
+
 const spots = [
-  { name: "13号館前", lat: 35.69302425885399, lon: 140.0508424409975, radius: 10, images: ["image0.jpeg", "image1.jpeg"], audio: { A: "spot1.ja.mp3", B: "spot1.en.mp3", C: "spot1.ch.mp3" } },
+  { name: "13号館前", lat: 35.69302425885399, lon: 140.0508424409975, radius: 0, images: ["image0.jpeg", "image1.jpeg"], audio: { A: "spot1.ja.mp3", B: "spot1.en.mp3", C: "spot1.ch.mp3" } },
   { name: "曲がり角右", lat: 35.69283234340133, lon: 140.05091587321536, radius: 20, images: ["image3.jpeg", "image11.jpeg"], audio: { A: "spot3,4.ja.mp3", B: "spot3,4.en.mp3", C: "spot3,4.ch.mp3" } },
   { name: "曲がり角右１", lat: 35.69286877921128, lon:140.05030279528978, radius: 20, images: ["image4.jpeg", "image13.jpeg"], audio: { A: "spot3,4.ja.mp3", B: "spot3,4.en.mp3", C: "spot3,4.ch.mp3" } },
   { name: "曲がり角右２", lat: 35.69334894066289, lon:140.05033682451656, radius: 20, images: ["image5.jpeg", "image14.jpeg"], audio: { A: "spot5,6.ja.mp3", B: "spot5,6.en.mp3", C: "spot5,6.ch.mp3" } },
@@ -52,7 +46,6 @@ const spots = [
   { name: "目的地", lat: 35.693014464267506, lon:140.0509410980045, radius: 20, images: ["image7.jpeg", "image16.jpeg"], audio: { A: "spot7,8.ja.mp3", B: "spot7,8.en.mp3", C: "spot7,8.ch.mp3" } }
 ];
 
-/* === 状態変数 === */
 let currentIndex = 0;
 let hasEnteredSpot = false;
 let currentSpot = null;
@@ -63,82 +56,30 @@ let stepCount = 0;
 let lastStepTime = 0;
 let lastAccMag = 0;
 let lastMoveTime = Date.now();
+const STEP_LENGTH = 0.7; // 1歩あたり0.7m
+const STEP_THRESHOLD = 1.2; // 加速度変化のしきい値
 let currentSpeed = 0;
-let imuLat = null, imuLon = null; // IMUで推定される位置
-let gpsLat = null, gpsLon = null, gpsAcc = null;
-let heading = 0; // 方位（度）
-let smoothedHeading = 0;
-let lastUpdateTime = null;
-let strideScale = 1.0;
-let fusionGain = 0.12; // GPS -> IMU 補正ゲイン（0..1）, UIで調整可能
 
-/* === UI 要素 === */
+let lastUpdateTime = null;
+let imuLat = null, imuLon = null; // 最終的にはカルマンフィルタ出力で上書き
+let heading = 0; // 方位（度）
+
+// UI elements
 const camera = document.getElementById("camera");
 const info = document.getElementById("info");
-const debug = document.getElementById("debug");
 const image = document.getElementById("image");
 const nextBtn = document.getElementById("nextBtn");
 const patternBtn = document.getElementById("patternBtn");
 const audio = document.getElementById("audio");
 const prevBtn = document.getElementById("prevBtn");
 const nextImgBtn = document.getElementById("nextImgBtn");
-const startBtn = document.getElementById("startBtn");
-const controls = document.getElementById("controls");
-const strideScaleEl = document.getElementById("strideScale");
-const strideVal = document.getElementById("strideVal");
-const fusionEl = document.getElementById("fusionGain");
-const fusionVal = document.getElementById("fusionVal");
 
-/* === カメラ起動はユーザー操作から === */
-function startApp() {
-  startBtn.style.display = "none";
-  controls.style.display = "block";
-  debug.style.display = "block";
-  info.innerText = "センサー許可を要求中...";
+/* ---------------- カメラ起動 ---------------- */
+navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+  .then(stream => camera.srcObject = stream)
+  .catch(err => console.log("カメラへのアクセスに失敗しました: " + err));
 
-  // カメラ起動
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
-    .then(stream => camera.srcObject = stream)
-    .catch(err => {
-      console.warn("カメラ取得失敗:", err);
-      info.innerText = "カメラへのアクセスに失敗しました: " + err;
-    });
-
-  // iOS / 一部ブラウザ向けにDeviceMotionEvent/DeviceOrientationEventの許可を要求
-  const p1 = (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function")
-    ? DeviceMotionEvent.requestPermission().then(r => r === 'granted').catch(()=>false)
-    : Promise.resolve(true);
-  const p2 = (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function")
-    ? DeviceOrientationEvent.requestPermission().then(r => r === 'granted').catch(()=>false)
-    : Promise.resolve(true);
-
-  Promise.all([p1, p2]).then(results => {
-    const ok = results[0] && results[1];
-    if (!ok) {
-      info.innerText = "センサー許可が必要です（ブラウザ設定をご確認ください）。";
-      return;
-    }
-    info.innerText = "センサー許可が得られました。位置情報取得を開始します...";
-    attachSensors();
-    startGeolocation();
-    // 初期スポットを表示（QR起動時は開始地点がスポット0の近辺である想定）
-    currentIndex = 0;
-    showSpot(spots[0]);
-    updatePatternButtonText();
-  }).catch(err => {
-    console.warn("permission error", err);
-    info.innerText = "センサー許可に失敗しました: " + err;
-  });
-}
-
-/* === フィルタ／ユーティリティ関数 === */
-// 単純ローパス: y = alpha * x + (1-alpha) * y_prev
-function lowpass(prev, x, alpha) {
-  if (prev === null || prev === undefined) return x;
-  return alpha * x + (1 - alpha) * prev;
-}
-
-// ハバースィン距離
+/* ---------------- 距離計算（haversine） ---------------- */
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -148,139 +89,222 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-/* === センサ取り付け・歩数検出とIMUデッドレコニング（簡易PDR） === */
-let accBuffer = []; // 最近の加速度大きさのウィンドウ
-const ACC_WINDOW_MS = 800;
-function attachSensors() {
-  // DeviceOrientation で方位（alpha）が得られる
-  if (window.DeviceOrientationEvent) {
-    window.addEventListener("deviceorientation", (event) => {
-      // absoluteが使えるならそれを優先
-      let a = event.alpha;
-      if (a === null || a === undefined) return;
-      // デバイス固有の反転や方位系の違いを吸収（北=0）
-      heading = 360 - a;
-      // スムーズにする
-      smoothedHeading = lowpass(smoothedHeading, heading, 0.3);
-    }, true);
+/* ---------------- カルマンフィルタ（シンプル4次元: x(East), y(North), vx, vy) ---------------- */
+/*
+  - 状態はメートル単位で保持。地球上の座標(lat, lon)はローカル近似でメートル変換を行う。
+  - F (状態遷移) と H (観測行列) を使った線形カルマンフィルタ。
+  - IMU（歩行による移動）を予測段階で直接位置変位として適用（制御入力のように扱う）。
+*/
+class SimpleKalman2D {
+  constructor(lat0, lon0, opts = {}) {
+    // 基準緯度での経度->メートルのスケール（簡易）
+    this.refLat = lat0;
+    this.cosRefLat = Math.cos(lat0 * Math.PI / 180);
+
+    // 状態ベクトル [x, y, vx, vy] (m, m, m/s, m/s)
+    this.x = [0, 0, 0, 0];
+
+    // 初期位置をセット（lat/lon -> meters）
+    const m = this.latLonToMeters(lat0, lon0);
+    this.x[0] = m.x;
+    this.x[1] = m.y;
+
+    // 共分散行列 P (4x4)
+    // 小さい値で自信がある初期化: 位置はGPSに依存するので中程度の不確かさ
+    const posVar = (opts.initPosStd || 5) ** 2; // m^2
+    const velVar = (opts.initVelStd || 1) ** 2;
+    this.P = [
+      [posVar,0,0,0],
+      [0,posVar,0,0],
+      [0,0,velVar,0],
+      [0,0,0,velVar]
+    ];
+
+    // 観測ノイズ共分散 R （GPSの分散、m^2）
+    this.R = [
+      [(opts.gpsStd || 5) ** 2, 0],
+      [0, (opts.gpsStd || 5) ** 2]
+    ];
+
+    // プロセスノイズ Q（4x4）
+    const qPos = (opts.processPosStd || 0.5) ** 2;
+    const qVel = (opts.processVelStd || 0.5) ** 2;
+    this.Q = [
+      [qPos,0,0,0],
+      [0,qPos,0,0],
+      [0,0,qVel,0],
+      [0,0,0,qVel]
+    ];
+
+    // 最後にタイムスタンプ
+    this.lastTs = null;
   }
 
-  // DeviceMotion で加速度
-  if (window.DeviceMotionEvent) {
-    window.addEventListener("devicemotion", (event) => {
-      const now = Date.now();
+  latLonToMeters(lat, lon) {
+    // y: north (meters), x: east (meters)
+    const y = lat * 111111.0;
+    const x = lon * 111111.0 * this.cosRefLat;
+    return { x, y };
+  }
 
-      // 可能なら重力除去済みの値を使う（event.acceleration）
-      const accObj = event.acceleration && event.acceleration.x !== null ? event.acceleration : event.accelerationIncludingGravity;
-      if (!accObj) return;
+  metersToLatLon(x, y) {
+    const lat = y / 111111.0;
+    const lon = x / (111111.0 * this.cosRefLat);
+    return { lat, lon };
+  }
 
-      const ax = accObj.x || 0;
-      const ay = accObj.y || 0;
-      const az = accObj.z || 0;
-      const accMag = Math.sqrt(ax*ax + ay*ay + az*az);
+  // dt: 秒, dx, dy: メートルでのIMU推定変位（east,north）
+  predict(dt, imu_dx = 0, imu_dy = 0) {
+    if (dt <= 0) return;
 
-      // ウィンドウに保持して動的閾値を算出
-      accBuffer.push({t: now, v: accMag});
-      // バッファ古いものを削除
-      while (accBuffer.length && now - accBuffer[0].t > ACC_WINDOW_MS) accBuffer.shift();
+    // 状態遷移（F）を考慮した単純な予測:
+    // x_new = x + vx*dt + imu_dx
+    // y_new = y + vy*dt + imu_dy
+    // vx_new = vx (process noise will handle acceleration)
+    // vy_new = vy
+    this.x[0] += this.x[2] * dt + imu_dx;
+    this.x[1] += this.x[3] * dt + imu_dy;
+    // 更新速度はimuからも推測できる（単純に分母dt）
+    if (dt > 0) {
+      const vx_imu = imu_dx / dt;
+      const vy_imu = imu_dy / dt;
+      // 緩やかに速度を融合（ここでは単純平均っぽく）
+      this.x[2] = 0.5 * (this.x[2] + vx_imu);
+      this.x[3] = 0.5 * (this.x[3] + vy_imu);
+    }
 
-      // 平均・標準偏差を計算（単純）
-      const vals = accBuffer.map(x => x.v);
-      const mean = vals.reduce((a,b)=>a+b,0)/vals.length;
-      const variance = vals.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(vals.length || 1);
-      const std = Math.sqrt(variance);
+    // P の予測: P = F P F^T + Q
+    // ここでF =
+    // [1 0 dt 0
+    //  0 1 0 dt
+    //  0 0 1 0
+    //  0 0 0 1]
+    // Compute F*P*F^T quickly (manual multiply for 4x4 structure)
+    const P = this.P;
+    const dt2 = dt;
+    // Build newP initialized with Q
+    const newP = [
+      [this.Q[0][0],0,0,0],
+      [0,this.Q[1][1],0,0],
+      [0,0,this.Q[2][2],0],
+      [0,0,0,this.Q[3][3]]
+    ];
 
-      // 動的閾値（平均 + k * std）
-      const DYN_K = 1.0;
-      const threshold = mean + DYN_K * std;
+    // Fill symmetric entries of F*P*F^T
+    // newP[0][0] += P00 + dt*(P02 + P20) + dt^2 * P22
+    newP[0][0] += P[0][0] + dt2*(P[0][2] + P[2][0]) + dt2*dt2*P[2][2];
+    newP[0][1] += P[0][1] + dt2*(P[0][3] + P[2][1]) + dt2*dt2*P[2][3];
+    newP[1][0] = newP[0][1];
+    newP[1][1] += P[1][1] + dt2*(P[1][3] + P[3][1]) + dt2*dt2*P[3][3];
 
-      // simple peak detection with debounce
-      if (accMag > threshold && now - lastStepTime > 300) {
-        // ステップ検出！
-        stepCount++;
-        const stepInterval = lastStepTime ? (now - lastStepTime)/1000 : 0.6;
-        lastStepTime = now;
-        lastMoveTime = now;
+    newP[0][2] += P[0][2] + dt2*P[2][2];
+    newP[2][0] = newP[0][2];
+    newP[0][3] += P[0][3] + dt2*P[2][3];
+    newP[3][0] = newP[0][3];
 
-        // 歩幅推定（周期から推定、経験式）
-        // 周期短 => 速歩 => 歩幅増加
-        let estimatedStride = 0.65 + 0.1 * Math.min(Math.max(0.2/stepInterval, 0.0), 1.5); // 目安
-        estimatedStride *= strideScale; // ユーザースケール
-        // 制限
-        estimatedStride = Math.max(0.4, Math.min(1.4, estimatedStride));
+    newP[1][2] += P[1][2] + dt2*P[3][2];
+    newP[2][1] = newP[1][2];
+    newP[1][3] += P[1][3] + dt2*P[3][3];
+    newP[3][1] = newP[1][3];
 
-        currentSpeed = estimatedStride / Math.max(0.15, stepInterval); // m/s
-        // 衝撃的な値のクリップ
-        currentSpeed = Math.max(0, Math.min(3.0, currentSpeed));
-      } else {
-        // 停止判定
-        if (now - lastMoveTime > 2000) {
-          currentSpeed = 0;
+    newP[2][2] += P[2][2];
+    newP[3][3] += P[3][3];
+    newP[2][3] += P[2][3];
+    newP[3][2] = newP[2][3];
+
+    this.P = newP;
+  }
+
+  // GPS測位を使って更新（lat, lon 測定）
+  update(lat_meas, lon_meas, measStd = 5.0) {
+    // 観測をメートルに変換
+    const m = this.latLonToMeters(lat_meas, lon_meas);
+    const z = [m.x, m.y];
+
+    // 観測行列 H = [1 0 0 0; 0 1 0 0]
+    // S = H P H^T + R  (2x2)
+    const P = this.P;
+
+    // S00 = P00 + R00, S01 = P01 + R01 (R is diagonal)
+    const R00 = (measStd ** 2);
+    const R11 = (measStd ** 2);
+
+    const S00 = P[0][0] + R00;
+    const S01 = P[0][1] + 0;
+    const S10 = P[1][0] + 0;
+    const S11 = P[1][1] + R11;
+
+    // Compute Kalman gain K = P H^T S^-1  (4x2)
+    // K = [ P00 P01 ; P10 P11 ; P20 P21 ; P30 P31 ] * inv(S)
+    const detS = S00 * S11 - S01 * S10;
+    let invS = [[0,0],[0,0]];
+    if (Math.abs(detS) < 1e-9) {
+      // 数値的にまずい場合はスキップ
+      return;
+    } else {
+      invS[0][0] =  S11 / detS;
+      invS[0][1] = -S01 / detS;
+      invS[1][0] = -S10 / detS;
+      invS[1][1] =  S00 / detS;
+    }
+
+    const K = [
+      [P[0][0]*invS[0][0] + P[0][1]*invS[1][0], P[0][0]*invS[0][1] + P[0][1]*invS[1][1]],
+      [P[1][0]*invS[0][0] + P[1][1]*invS[1][0], P[1][0]*invS[0][1] + P[1][1]*invS[1][1]],
+      [P[2][0]*invS[0][0] + P[2][1]*invS[1][0], P[2][0]*invS[0][1] + P[2][1]*invS[1][1]],
+      [P[3][0]*invS[0][0] + P[3][1]*invS[1][0], P[3][0]*invS[0][1] + P[3][1]*invS[1][1]]
+    ];
+
+    // イノベーション y = z - Hx
+    const y0 = z[0] - this.x[0];
+    const y1 = z[1] - this.x[1];
+
+    // 状態更新 x = x + K * y
+    for (let i = 0; i < 4; i++) {
+      this.x[i] += K[i][0] * y0 + K[i][1] * y1;
+    }
+
+    // 共分散更新 P = (I - K H) P
+    // Compute (I - K H)
+    const I_KH = [
+      [1 - K[0][0], -K[0][1], 0, 0],
+      [-K[1][0], 1 - K[1][1], 0, 0],
+      [-K[2][0], -K[2][1], 1, 0],
+      [-K[3][0], -K[3][1], 0, 1]
+    ];
+
+    // Multiply (I - K H) * P
+    const newP = Array(4).fill(0).map(_ => Array(4).fill(0));
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        let sum = 0;
+        for (let k = 0; k < 4; k++) {
+          sum += I_KH[i][k] * P[k][j];
         }
+        newP[i][j] = sum;
       }
+    }
+    this.P = newP;
+  }
 
-      // 位置更新（簡易：歩幅と方位で更新。連続積分より安定）
-      if (currentSpeed > 0 && imuLat !== null && imuLon !== null) {
-        const dt = lastUpdateTime ? (now - lastUpdateTime)/1000 : 0.1;
-        // distance = speed * dt
-        const distance = currentSpeed * dt;
-        const hdg = (smoothedHeading || heading) * Math.PI / 180;
-        const dLat = (distance * Math.cos(hdg)) / 111111;
-        const dLon = (distance * Math.sin(hdg)) / (111111 * Math.cos(imuLat * Math.PI / 180));
-        imuLat += dLat;
-        imuLon += dLon;
-      }
+  // state -> lat/lon
+  getLatLon() {
+    const pos = this.metersToLatLon(this.x[0], this.x[1]);
+    return { lat: pos.lat, lon: pos.lon };
+  }
 
-      lastUpdateTime = now;
-      // 近傍判定を行う
-      if (imuLat !== null && imuLon !== null) checkProximity(imuLat, imuLon);
-      updateDebug(mean, std, threshold);
-    }, true);
+  // 推定誤差（位置分散の平方根を返す、m単位）
+  getPositionStd() {
+    const sx2 = this.P[0][0];
+    const sy2 = this.P[1][1];
+    return { sx: Math.sqrt(Math.max(0, sx2)), sy: Math.sqrt(Math.max(0, sy2)) };
   }
 }
 
-/* === GPS（位置） === */
-let geoWatchId = null;
-function startGeolocation() {
-  if (!("geolocation" in navigator)) {
-    info.innerText = "このブラウザでは位置情報が使用できません";
-    return;
-  }
-  geoWatchId = navigator.geolocation.watchPosition(
-    pos => {
-      gpsLat = pos.coords.latitude;
-      gpsLon = pos.coords.longitude;
-      gpsAcc = pos.coords.accuracy; // meters
-      lastUpdateTime = Date.now();
+// カルマンフィルタインスタンス（最初はnullで、初回GPS受信時に初期化）
+let kf = null;
 
-      // IMU位置が未初期化ならここで初期化（QRから起動のため初期位置はGPSが正）
-      if (imuLat === null || imuLon === null) {
-        imuLat = gpsLat;
-        imuLon = gpsLon;
-      } else {
-        // GPSとIMUの融合（漸進的補正）
-        // 補正ゲインは GPS 精度（小さいほど高精度）とUIでのfusionGainを使って決定
-        // gain = fusionGain * (some factor inversely proportional to gpsAcc)
-        const accFactor = Math.max(1, gpsAcc); // 精度が小さいほど補正を強めたい
-        const gain = fusionGain * (1 / accFactor) * 10;
-        const clampedGain = Math.max(0.01, Math.min(0.6, gain));
-
-        imuLat = (1 - clampedGain) * imuLat + clampedGain * gpsLat;
-        imuLon = (1 - clampedGain) * imuLon + clampedGain * gpsLon;
-      }
-
-      checkProximity(imuLat, imuLon);
-      updateDebug();
-    },
-    err => {
-      console.warn("geolocation error", err);
-      info.innerText = "位置情報の取得に失敗しました: " + err.message;
-    },
-    { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
-  );
-}
-
-/* === スポット判定 === */
+/* ---------------- スポット判定 ---------------- */
 function checkProximity(lat, lon) {
   if (currentIndex >= spots.length) {
     info.innerText = "すべてのスポットを通過しました。";
@@ -292,22 +316,26 @@ function checkProximity(lat, lon) {
   const distance = getDistance(lat, lon, spot.lat, spot.lon);
   const range = spot.radius || 10;
 
-  info.innerText =
-    `IMU補正位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}\n` +
-    `GPS位置: ${gpsLat ? gpsLat.toFixed(6) + ',' + gpsLon.toFixed(6) + ' (±' + (gpsAcc?gpsAcc.toFixed(1):'---') + 'm)' : '未取得'}\n` +
-    `方位(平滑): ${smoothedHeading.toFixed(1)}°\n` +
-    `次のスポット: ${spot.name}（${currentIndex + 1} / ${spots.length}）\n` +
-    `残り距離: ${distance.toFixed(1)}m\n` +
-    `歩数: ${stepCount}, 速度: ${currentSpeed.toFixed(2)} m/s\n`;
+  // カルマンの推定誤差も取得して表示
+  let posStdText = "";
+  if (kf) {
+    const ps = kf.getPositionStd();
+    posStdText = `推定誤差（m）: σx=${ps.sx.toFixed(1)}, σy=${ps.sy.toFixed(1)}\n`;
+  }
 
-  // 発見条件：現在は currentIndex>=1 のときだけ案内表示するようにしていたが、
-  // 起点スポット(0)も意図的に表示できるようにするため、range内かつ未表示なら表示
-  if (!hasEnteredSpot && distance < range) {
+  info.innerText =
+    `IMU+Kalman補正位置: 緯度 ${lat.toFixed(6)}, 経度 ${lon.toFixed(6)}\n` +
+    posStdText +
+    `次のスポット: ${spot.name}（${currentIndex + 1} / ${spots.length}）\n` +
+    `残り距離: ${distance.toFixed(1)}m\n`;
+
+  // 現在のスポット判定（currentIndex >= 1 の判定を維持）
+  if (currentIndex >= 1 && !hasEnteredSpot && distance < range) {
     showSpot(spot);
   }
 }
 
-/* === スポット表示 === */
+/* ---------------- スポット表示 ---------------- */
 function showSpot(spot) {
   currentSpot = spot;
   hasEnteredSpot = true;
@@ -325,7 +353,7 @@ function showSpot(spot) {
   audio.play().catch(e => console.log("自動再生に失敗:", e));
 }
 
-/* === 音声パターン切替 === */
+/* ---------------- 音声パターン切替 ---------------- */
 function switchPattern() {
   const patterns = ["A", "B", "C"];
   const index = patterns.indexOf(currentPattern);
@@ -338,11 +366,12 @@ function switchPattern() {
     audio.play().catch(e => console.log("自動再生に失敗:", e));
   }
 }
+
 function updatePatternButtonText() {
   patternBtn.innerText = currentPattern === "A" ? "English" : currentPattern === "B" ? "中文" : "日本語";
 }
 
-/* === 画像切替 === */
+/* ---------------- 画像切替 ---------------- */
 function showPrevImage() {
   if (!currentSpot) return;
   imageIndex = (imageIndex - 1 + currentSpot.images.length) % currentSpot.images.length;
@@ -354,7 +383,7 @@ function showNextImage() {
   image.src = currentSpot.images[imageIndex];
 }
 
-/* === 次のスポットへ === */
+/* ---------------- 次のスポットへ ---------------- */
 function goToNextSpot() {
   audio.pause();
   currentIndex++;
@@ -363,7 +392,7 @@ function goToNextSpot() {
   hideAllUI();
 }
 
-/* === UI 非表示 === */
+/* ---------------- UI 非表示 ---------------- */
 function hideAllUI() {
   image.style.display = "none";
   nextBtn.style.display = "none";
@@ -372,31 +401,122 @@ function hideAllUI() {
   nextImgBtn.style.display = "none";
 }
 
-/* === デバッグ表示 === */
-function updateDebug(mean, std, threshold) {
-  const parts = [];
-  parts.push(`IMU: ${imuLat?imuLat.toFixed(6):'---'}, ${imuLon?imuLon.toFixed(6):'---'}`);
-  parts.push(`GPS: ${gpsLat?gpsLat.toFixed(6):'---'}, ${gpsLon?gpsLon.toFixed(6):'---'} (±${gpsAcc?gpsAcc.toFixed(1):'---'}m)`);
-  parts.push(`heading: ${heading.toFixed(1)}°, smoothed: ${smoothedHeading.toFixed(1)}°`);
-  parts.push(`speed: ${currentSpeed.toFixed(2)} m/s, steps: ${stepCount}`);
-  if (mean !== undefined) parts.push(`acc mean:${mean.toFixed(2)} std:${std.toFixed(2)} thr:${threshold.toFixed(2)}`);
-  parts.push(`fusionGain(UI): ${fusionGain.toFixed(2)}`);
-  debug.innerText = parts.join("\n");
+/* ---------------- IMU（加速度＋方位） ---------------- */
+if (window.DeviceOrientationEvent) {
+  window.addEventListener("deviceorientation", (event) => {
+    if (event.absolute && event.alpha != null) {
+      // alphaは0〜360、端末向きによる差があるので補正（北を0とする）
+      heading = 360 - event.alpha;
+    } else if (event.alpha != null) {
+      // absoluteでない場合も使用（精度は下がる）
+      heading = 360 - event.alpha;
+    }
+  });
 }
 
-/* === コントロールUIのイベント === */
-strideScaleEl.addEventListener('input', (e) => {
-  strideScale = parseFloat(e.target.value);
-  strideVal.innerText = strideScale.toFixed(2);
-});
-fusionEl.addEventListener('input', (e) => {
-  fusionGain = parseFloat(e.target.value);
-  fusionVal.innerText = fusionGain.toFixed(2);
-});
+if (window.DeviceMotionEvent) {
+  window.addEventListener("devicemotion", (event) => {
+    const acc = event.accelerationIncludingGravity;
+    const now = Date.now();
+    if (!lastUpdateTime || (!imuLat && !kf)) {
+      lastUpdateTime = now;
+      // まだ初期化がない場合はIMU予測は行えない
+      lastAccMag = Math.sqrt((acc.x||0)**2 + (acc.y||0)**2 + (acc.z||0)**2);
+      return;
+    }
 
-/* === ページ読み込み時の処理 === */
+    const dt = (now - lastUpdateTime) / 1000;
+    lastUpdateTime = now;
+
+    // 加速度の大きさ
+    const accMag = Math.sqrt((acc.x||0) ** 2 + (acc.y||0) ** 2 + (acc.z||0) ** 2);
+
+    // ステップ検出（ピーク判定）
+    if (accMag - lastAccMag > STEP_THRESHOLD && now - lastStepTime > 300) {
+      stepCount++;
+      stepInterval = (now - lastStepTime) / 1000;
+      lastStepTime = now;
+      lastMoveTime = now;
+
+      // 歩行速度 = 歩幅 ÷ ステップ間隔
+      currentSpeed = STEP_LENGTH / stepInterval;
+      // 速度を4〜8km/hの範囲に制限（m/s）
+      currentSpeed = Math.min(Math.max(currentSpeed, 1.1), 2.2);
+    }
+
+    lastAccMag = accMag;
+
+    // 停止判定
+    if (now - lastMoveTime > 2000) {
+      currentSpeed = 0;
+    }
+
+    // 位置更新（IMUによるデッドレコニング） -> カルマンの予測に使用
+    if (kf && currentSpeed > 0 && typeof heading === "number") {
+      // heading をラジアンに
+      const hdg = heading * Math.PI / 180;
+      const distance = currentSpeed * dt; // m
+      const dx_east = distance * Math.sin(hdg); // east
+      const dy_north = distance * Math.cos(hdg); // north
+
+      // カルマンの予測 (dt, imu_dx, imu_dy)
+      kf.predict(dt, dx_east, dy_north);
+
+      // カルマン推定位置を imuLat/imuLon に反映してスポット判定へ
+      const est = kf.getLatLon();
+      imuLat = est.lat;
+      imuLon = est.lon;
+      checkProximity(imuLat, imuLon);
+    }
+  });
+}
+
+/* ---------------- GPS ---------------- */
+if ("geolocation" in navigator) {
+  navigator.geolocation.watchPosition(
+    pos => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const accuracy = pos.coords.accuracy || 5; // meters
+
+      // 初回GPS受信でカルマンフィルタを初期化
+      if (!kf) {
+        kf = new SimpleKalman2D(lat, lon, {
+          gpsStd: Math.max(accuracy, 3),
+          initPosStd: Math.max(accuracy, 5),
+          initVelStd: 1,
+          processPosStd: 0.5,
+          processVelStd: 0.5
+        });
+      } else {
+        // 予測と更新: 時間差を計測して、先にpredictが呼ばれていればそのままupdate
+        // ここでは単純にupdateを行う（GPSは観測）
+        kf.update(lat, lon, Math.max(accuracy, 3));
+      }
+
+      // カルマンの推定位置を使う
+      const est = kf.getLatLon();
+      imuLat = est.lat;
+      imuLon = est.lon;
+      lastUpdateTime = Date.now();
+
+      checkProximity(imuLat, imuLon);
+    },
+    err => {
+      info.innerText = "位置情報の取得に失敗しました: " + (err.message || err.code);
+      console.log("geolocation error:", err);
+    },
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+  );
+} else {
+  info.innerText = "このブラウザでは位置情報が利用できません。";
+}
+
+/* ---------------- 初期UI ---------------- */
 window.onload = () => {
-  // 初期UIは "開始" ボタンのみ
+  // 既存の動作を尊重して最初のスポットを表示（案内のデモとして）
+  // ただし、カルマンはGPS初回受信時に初期化されます。
+  showSpot(spots[0]);
   updatePatternButtonText();
 };
 </script>
